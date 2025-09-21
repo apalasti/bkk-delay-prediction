@@ -1,0 +1,20 @@
+__pycache__/
+.pytest_cache/
+.mypy_cache/
+.venv/
+venv/
+.DS_Store
+*.pyc
+*.pyo
+*.pyd
+
+# Git
+.git
+.gitignore
+
+# Local data and credentials
+data/
+.env
+
+# Terraform state and cache
+infra/
