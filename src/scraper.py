@@ -1,30 +1,77 @@
-from ast import arg
 import time
 import os
 import pandas as pd
 import logging
 import threading
+import io
 from datetime import datetime
 from pathlib import Path
+from itertools import groupby
 
 import schedule
 from azure.storage.blob import BlobServiceClient
+from dotenv import load_dotenv
 
 from .fetch.vehicle_positions import fetch_vehicle_positions
 from .fetch.alerts import fetch_alerts
 
+load_dotenv()
 logger = logging.getLogger(__name__)
-CONNECTION_STRING = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+
+CONNECTION_STRING = os.getenv("AZURE_STORAGE_CONNECTION_STRING")
+POSITIONS_CONTAINER = os.getenv("POSITIONS_CONTAINER", "positions")
+ALERTS_CONTAINER = os.getenv("ALERTS_CONTAINER", "alerts")
 
 
 def upload_df_to_azure(df: pd.DataFrame, connection: str, container_name: str, filename: str):
     blob_service_client = BlobServiceClient.from_connection_string(connection)
     container_client = blob_service_client.get_container_client(container_name)
-    blob_client = container_client.get_blob_client(blob=filename)
+    if not container_client.exists():
+        container_client.create_container()
+        logger.info(f"Created container: '{container_name}'")
 
+    blob_client = container_client.get_blob_client(blob=filename)
     data = df.to_parquet(index=False)
     blob_client.upload_blob(data, overwrite=True)
     logger.info(f"Uploaded to '{container_name}': '{filename}' ({len(df)} rows)")
+
+
+def merge_parquets(connection: str, container_name: str):
+    logger.info(f"Starting merge for container: '{container_name}'")
+    blob_service_client = BlobServiceClient.from_connection_string(connection)
+    container_client = blob_service_client.get_container_client(container_name)
+
+    parquet_files = sorted(
+        name
+        for name in container_client.list_blob_names()
+        if name.endswith(".parquet")
+        and len(name.rstrip(".parquet")) >= 6
+        and name.rstrip(".parquet")[-6:].isdigit()
+    )
+    for key, group in groupby(parquet_files, lambda name: name.rstrip(".parquet")[:-4]):
+        group = list(group)
+        if len(group) < 2:
+            logger.info(f"Skipping group '{key}': less than 2 files to merge.")
+            continue
+
+        try:
+            grouped_dfs = []
+            for file_name in group:
+                blob_client = container_client.get_blob_client(file_name)
+                with io.BytesIO() as b:
+                    blob_client.download_blob().readinto(b)
+                    grouped_dfs.append(pd.read_parquet(b))
+
+            merged_file = f"{key}.parquet"
+            merged_df = pd.concat(grouped_dfs)
+            upload_df_to_azure(merged_df, connection, container_name, merged_file)
+
+            for file_name in group:
+                blob_client = container_client.get_blob_client(file_name)
+                blob_client.delete_blob()
+            logger.info(f"Successfully merged {len(group)} files into: '{merged_file}'")
+        except Exception:
+            logger.error(f"Error during merging and uploading parquet files for key '{key}':", exc_info=True)
 
 
 def save_positions(container_name: str = None):
@@ -81,14 +128,18 @@ def main():
 
     # Run them first
     threads = [
-        run_threaded(save_positions, "positions"),
-        run_threaded(save_alerts, "alerts")
+        run_threaded(save_positions, POSITIONS_CONTAINER),
+        run_threaded(save_alerts, ALERTS_CONTAINER)
     ]
     for thread in threads:
         thread.join()
 
-    schedule.every(15).seconds.do(run_threaded, save_positions, "positions")
-    schedule.every(12).hours.do(run_threaded, save_alerts, "alerts")
+    # Schedule hourly compaction for vehicle positions data
+    if CONNECTION_STRING is not None:
+        schedule.every().hour.do(run_threaded, merge_parquets, CONNECTION_STRING, POSITIONS_CONTAINER)
+
+    schedule.every(15).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
+    schedule.every().day.do(run_threaded, save_alerts, ALERTS_CONTAINER)
 
     logger.info("Scheduler loop starting ...")
     while True:
@@ -97,6 +148,7 @@ def main():
 
 
 if __name__ == "__main__":
+    logging.getLogger("azure.core").setLevel(logging.WARNING)
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",

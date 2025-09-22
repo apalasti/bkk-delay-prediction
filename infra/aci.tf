@@ -36,6 +36,8 @@ resource "azurerm_container_group" "aci" {
     environment_variables = {
       "BKK_API_KEY"                     = var.BKK_API_KEY
       "AZURE_STORAGE_CONNECTION_STRING" = azurerm_storage_account.main.primary_connection_string
+      "ALERTS_CONTAINER"                = azurerm_storage_container.alerts.name
+      "POSITIONS_CONTAINER"             = azurerm_storage_container.positions.name
     }
   }
 
