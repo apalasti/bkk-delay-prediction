@@ -1,19 +1,21 @@
-import time
-import os
-import pandas as pd
-import logging
-import threading
 import io
+import logging
+import os
+import re
+import threading
+import time
 from datetime import datetime
-from pathlib import Path
 from itertools import groupby
+from pathlib import Path
 
+import pandas as pd
+import pyarrow as pa
 import schedule
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 
-from .fetch.vehicle_positions import fetch_vehicle_positions
 from .fetch.alerts import fetch_alerts
+from .fetch.vehicle_positions import fetch_vehicle_positions
 
 load_dotenv()
 logger = logging.getLogger(__name__)
@@ -31,7 +33,7 @@ def upload_df_to_azure(df: pd.DataFrame, connection: str, container_name: str, f
         logger.info(f"Created container: '{container_name}'")
 
     blob_client = container_client.get_blob_client(blob=filename)
-    data = df.to_parquet(index=False)
+    data = df.convert_dtypes(dtype_backend='pyarrow').to_parquet(index=False)
     blob_client.upload_blob(data, overwrite=True)
     logger.info(f"Uploaded to '{container_name}': '{filename}' ({len(df)} rows)")
 
@@ -44,11 +46,11 @@ def merge_parquets(connection: str, container_name: str):
     parquet_files = sorted(
         name
         for name in container_client.list_blob_names()
-        if name.endswith(".parquet")
-        and len(name.rstrip(".parquet")) >= 6
-        and name.rstrip(".parquet")[-6:].isdigit()
+        if re.match(r".*[0-9]{2}([0-9]{4})?\.parquet$", name)
     )
-    for key, group in groupby(parquet_files, lambda name: name.rstrip(".parquet")[:-4]):
+    for key, group in groupby(
+        parquet_files, lambda name: re.sub(r"([0-9]{4})?\.parquet$", "", name)
+    ):
         group = list(group)
         if len(group) < 2:
             logger.info(f"Skipping group '{key}': less than 2 files to merge.")
@@ -60,11 +62,13 @@ def merge_parquets(connection: str, container_name: str):
                 blob_client = container_client.get_blob_client(file_name)
                 with io.BytesIO() as b:
                     blob_client.download_blob().readinto(b)
-                    grouped_dfs.append(pd.read_parquet(b))
+                    grouped_dfs.append(pd.read_parquet(b, engine='pyarrow'))
 
             merged_file = f"{key}.parquet"
             merged_df = pd.concat(grouped_dfs)
             upload_df_to_azure(merged_df, connection, container_name, merged_file)
+            del grouped_dfs
+            del merged_df
 
             for file_name in group:
                 blob_client = container_client.get_blob_client(file_name)
@@ -72,6 +76,7 @@ def merge_parquets(connection: str, container_name: str):
             logger.info(f"Successfully merged {len(group)} files into: '{merged_file}'")
         except Exception:
             logger.error(f"Error during merging and uploading parquet files for key '{key}':", exc_info=True)
+
 
 
 def save_positions(container_name: str = None):
@@ -136,6 +141,7 @@ def main():
 
     # Schedule hourly compaction for vehicle positions data
     if CONNECTION_STRING is not None:
+        # merge_parquets(CONNECTION_STRING, POSITIONS_CONTAINER)
         schedule.every().hour.do(run_threaded, merge_parquets, CONNECTION_STRING, POSITIONS_CONTAINER)
 
     schedule.every(15).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
