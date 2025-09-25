@@ -9,13 +9,12 @@ from itertools import groupby
 from pathlib import Path
 
 import pandas as pd
-import pyarrow as pa
 import schedule
 from azure.storage.blob import BlobServiceClient
 from dotenv import load_dotenv
 
-from .fetch.alerts import fetch_alerts
-from .fetch.vehicle_positions import fetch_vehicle_positions
+from src.fetch.alerts import fetch_alerts
+from src.fetch.vehicle_positions import fetch_vehicle_positions
 
 load_dotenv()
 logger = logging.getLogger(__name__)

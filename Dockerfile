@@ -15,10 +15,10 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 
 # Install dependencies (system-wide in container)
-RUN uv sync --frozen --no-dev --all-extras
+RUN uv sync --frozen --no-dev --extra azure
 
 # Copy the actual project code
 COPY . .
 
 # Run application (adjust entrypoint as needed)
-CMD ["uv", "run", "python", "-m", "src.scraper"]
+CMD ["uv", "run", "python", "-m", "scripts.scraper"]
