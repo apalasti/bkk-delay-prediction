@@ -52,8 +52,13 @@ resource "azurerm_linux_virtual_machine" "vm" {
   }
 
   os_disk {
+    name                 = "${local.project_name}-vm-disk"
     caching              = "ReadWrite"
     storage_account_type = "Standard_LRS"
+  }
+
+  identity {
+    type = "SystemAssigned"
   }
 
   # Cloud-init to install Docker & run container
@@ -62,20 +67,70 @@ resource "azurerm_linux_virtual_machine" "vm" {
 package_update: true
 packages:
   - docker.io
+  - rsyslog
 runcmd:
+  - sudo systemctl enable rsyslog
+  - sudo systemctl start rsyslog
   - sudo su
   - "docker login ${azurerm_container_registry.main.login_server}
       -u '${azurerm_container_registry.main.admin_username}'
       -p '${azurerm_container_registry.main.admin_password}'"
   - docker pull ${azurerm_container_registry.main.login_server}/${local.scraper_image}:latest
-  - "docker run -d --name scraper 
+  - "docker run -d --name scraper --log-driver syslog --log-opt syslog-facility=local0
     -e BKK_API_KEY='${var.BKK_API_KEY}' 
     -e AZURE_STORAGE_CONNECTION_STRING='${azurerm_storage_account.main.primary_connection_string}' 
     -e ALERTS_CONTAINER='${azurerm_storage_container.alerts.name}'
     -e POSITIONS_CONTAINER='${azurerm_storage_container.positions.name}'
     ${azurerm_container_registry.main.login_server}/${local.scraper_image}:latest"
-  - mkdir -p /var/log/scraper
-  - docker logs -f scraper &> /var/log/scraper/output.log &
 EOF
   )
+}
+
+# Install Azure Monitor Agent on VM
+resource "azurerm_virtual_machine_extension" "vm_monitor_agent" {
+  depends_on = [azurerm_linux_virtual_machine.vm]
+
+  name                       = "AzureMonitorLinuxAgent"
+  publisher                  = "Microsoft.Azure.Monitor"
+  type                       = "AzureMonitorLinuxAgent"
+  type_handler_version       = "1.0"
+  auto_upgrade_minor_version = true
+
+  virtual_machine_id = azurerm_linux_virtual_machine.vm.id
+  settings = jsonencode({})
+}
+
+# Data Collection Rule for Syslog
+resource "azurerm_monitor_data_collection_rule" "vm_dcr" {
+  name                = "${azurerm_linux_virtual_machine.vm.name}-dcr"
+  resource_group_name = azurerm_resource_group.main.name
+  location            = azurerm_resource_group.main.location
+
+  destinations {
+    log_analytics {
+      workspace_resource_id = azurerm_log_analytics_workspace.main.id
+      name                  = "scraper-law-destination"
+    }
+  }
+
+  data_sources {
+    syslog {
+      name           = "syslog-datasource"
+      facility_names = ["local0"]
+      log_levels     = ["*"]
+      streams        = ["Microsoft-Syslog"]
+    }
+  }
+
+  data_flow {
+    streams      = ["Microsoft-Syslog"]
+    destinations = ["scraper-law-destination"]
+  }
+}
+
+# Associate Data Collection Rule with VM
+resource "azurerm_monitor_data_collection_rule_association" "dcr_assoc" {
+  name                    = "vm-log-collection-association"
+  target_resource_id      = azurerm_linux_virtual_machine.vm.id
+  data_collection_rule_id = azurerm_monitor_data_collection_rule.vm_dcr.id
 }
