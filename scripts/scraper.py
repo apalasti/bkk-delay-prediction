@@ -70,6 +70,8 @@ def merge_parquets(connection: str, container_name: str):
             del merged_df
 
             for file_name in group:
+                if file_name == merged_file:
+                    continue
                 blob_client = container_client.get_blob_client(file_name)
                 blob_client.delete_blob()
             logger.info(f"Successfully merged {len(group)} files into: '{merged_file}'")
@@ -143,7 +145,7 @@ def main():
         # merge_parquets(CONNECTION_STRING, POSITIONS_CONTAINER)
         schedule.every().hour.do(run_threaded, merge_parquets, CONNECTION_STRING, POSITIONS_CONTAINER)
 
-    schedule.every(15).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
+    schedule.every(20).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
     schedule.every().day.do(run_threaded, save_alerts, ALERTS_CONTAINER)
 
     logger.info("Scheduler loop starting ...")

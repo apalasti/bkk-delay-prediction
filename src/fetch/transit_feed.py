@@ -3,6 +3,7 @@ import os
 from typing import Literal
 
 import requests
+from requests.adapters import HTTPAdapter
 from dotenv import load_dotenv
 from google.transit import gtfs_realtime_pb2
 
@@ -46,8 +47,11 @@ def fetch_trainsit_feed(feed_type: FEED_TYPES, api_key=None, timeout=10):
 
     url = get_url(feed_type)
     try:
-        response = requests.get(url, params={"key": api_key}, timeout=timeout)
+        s = requests.Session()
+        s.mount('https://', HTTPAdapter(max_retries=0))
+        response = s.get(url, params={"key": api_key}, timeout=timeout)
         response.raise_for_status()
+
         feed = gtfs_realtime_pb2.FeedMessage()
         feed.ParseFromString(response.content)
         return feed

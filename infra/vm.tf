@@ -76,7 +76,7 @@ runcmd:
       -u '${azurerm_container_registry.main.admin_username}'
       -p '${azurerm_container_registry.main.admin_password}'"
   - docker pull ${azurerm_container_registry.main.login_server}/${local.scraper_image}:latest
-  - "docker run -d --name scraper --log-driver syslog --log-opt syslog-facility=local0
+  - "docker run -d  --restart always --name scraper --log-driver syslog --log-opt syslog-facility=local0
     -e BKK_API_KEY='${var.BKK_API_KEY}' 
     -e AZURE_STORAGE_CONNECTION_STRING='${azurerm_storage_account.main.primary_connection_string}' 
     -e ALERTS_CONTAINER='${azurerm_storage_container.alerts.name}'
@@ -84,6 +84,10 @@ runcmd:
     ${azurerm_container_registry.main.login_server}/${local.scraper_image}:latest"
 EOF
   )
+
+  lifecycle {
+    replace_triggered_by = [null_resource.docker_build_and_push.id]
+  }
 }
 
 # Install Azure Monitor Agent on VM
@@ -97,7 +101,7 @@ resource "azurerm_virtual_machine_extension" "vm_monitor_agent" {
   auto_upgrade_minor_version = true
 
   virtual_machine_id = azurerm_linux_virtual_machine.vm.id
-  settings = jsonencode({})
+  settings           = jsonencode({})
 }
 
 # Data Collection Rule for Syslog
