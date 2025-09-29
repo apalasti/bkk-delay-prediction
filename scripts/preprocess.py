@@ -117,7 +117,7 @@ def clean_stops(conn: duckdb.DuckDBPyConnection):
         ) AS current_stop_sequence,
         st.stop_id AS stop_id
     FROM positions p
-    JOIN stop_times st ON 
+    LEFT JOIN stop_times st ON 
         p.trip_id = st.trip_id AND current_stop_sequence = st.stop_sequence""")
 
 
@@ -126,15 +126,15 @@ def extend_with_arrivals(conn: duckdb.DuckDBPyConnection):
     CREATE OR REPLACE TABLE positions AS
     WITH 
         a AS (
-            SELECT global_trip_id, stop_id, max(timestamp) AS timestamp
-            FROM positions GROUP BY global_trip_id, stop_id
+            SELECT global_trip_id, current_stop_sequence, max(timestamp) AS timestamp
+            FROM positions GROUP BY global_trip_id, current_stop_sequence
         )
     SELECT p.*, st.arrival_time AS target_arrival, strftime(a.timestamp, '%H:%M:%S') AS actual_arrival
     FROM positions p
-    JOIN stop_times st
-        ON p.trip_id = st.trip_id AND p.stop_id = st.stop_id
-    JOIN a
-        ON p.global_trip_id = a.global_trip_id AND p.stop_id = a.stop_id
+    LEFT JOIN stop_times st
+        ON p.trip_id = st.trip_id AND p.current_stop_sequence = st.stop_sequence
+    LEFT JOIN a
+        ON p.global_trip_id = a.global_trip_id AND p.current_stop_sequence = a.current_stop_sequence
     """)
 
 
