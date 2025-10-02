@@ -4,6 +4,7 @@ import os
 import re
 import threading
 import time
+import gc
 from datetime import datetime
 from itertools import groupby
 from pathlib import Path
@@ -78,6 +79,11 @@ def merge_parquets(connection: str, container_name: str):
         except Exception:
             logger.error(f"Error during merging and uploading parquet files for key '{key}':", exc_info=True)
 
+    # Trigger garbage collection
+    before = gc.get_count()
+    gc.collect()
+    after = gc.get_count()
+    logger.info(f"Garbage collection triggered. Counts before: {before}, after: {after}")
 
 
 def save_positions(container_name: str = None):
@@ -145,7 +151,7 @@ def main():
         # merge_parquets(CONNECTION_STRING, POSITIONS_CONTAINER)
         schedule.every().hour.do(run_threaded, merge_parquets, CONNECTION_STRING, POSITIONS_CONTAINER)
 
-    schedule.every(20).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
+    schedule.every(15).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
     schedule.every().day.do(run_threaded, save_alerts, ALERTS_CONTAINER)
 
     logger.info("Scheduler loop starting ...")
