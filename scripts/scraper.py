@@ -133,24 +133,43 @@ def save_alerts(container_name: str = None):
 
 
 def main():
+    # Track running jobs
+    running_jobs = set()
+    job_lock = threading.Lock()
+
     def run_threaded(job_func, *args, **kwargs):
-        job_thread = threading.Thread(target=job_func, args=args, kwargs=kwargs)
+        job_id = f"{job_func.__name__}_{'_'.join(map(str, args))}"
+        with job_lock:
+            if job_id in running_jobs:
+                logger.debug(f"Job {job_id} is already running, skipping")
+                return None
+            running_jobs.add(job_id)
+        
+        def job_wrapper():
+            try:
+                job_func(*args, **kwargs)
+            finally:
+                with job_lock:
+                    running_jobs.discard(job_id)
+        
+        job_thread = threading.Thread(target=job_wrapper)
         job_thread.start()
         return job_thread
 
-    # Run them first
+    # Run initial jobs
     threads = [
         run_threaded(save_positions, POSITIONS_CONTAINER),
         run_threaded(save_alerts, ALERTS_CONTAINER)
     ]
     for thread in threads:
-        thread.join()
+        if thread:  # Only join if thread was created
+            thread.join()
 
-    # Schedule hourly compaction for vehicle positions data
+    # Schedule recurring jobs
     if CONNECTION_STRING is not None:
         # merge_parquets(CONNECTION_STRING, POSITIONS_CONTAINER)
         schedule.every().hour.do(run_threaded, merge_parquets, CONNECTION_STRING, POSITIONS_CONTAINER)
-
+    
     schedule.every(15).seconds.do(run_threaded, save_positions, POSITIONS_CONTAINER)
     schedule.every().day.do(run_threaded, save_alerts, ALERTS_CONTAINER)
 

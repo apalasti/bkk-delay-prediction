@@ -2,11 +2,10 @@
 FROM python:3.10-slim AS base
 
 # Install uv (static binary, very fast)
-RUN apt-get update && apt-get install -y curl \
-    && curl -LsSf https://astral.sh/uv/install.sh | sh \
-    && rm -rf /var/lib/apt/lists/*
-
-ENV PATH="/root/.local/bin:$PATH"
+RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
+ADD https://astral.sh/uv/install.sh /uv-installer.sh
+RUN sh /uv-installer.sh && rm /uv-installer.sh
+ENV PATH="/root/.local/bin/:$PATH"
 
 # Set working directory
 WORKDIR /app
