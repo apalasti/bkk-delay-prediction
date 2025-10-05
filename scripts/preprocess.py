@@ -36,9 +36,9 @@ def main():
         logger.info(f"Loading parquet files from: {positions_dir}, {static_dir}")
         conn.execute(f"CREATE TABLE positions AS SELECT * FROM read_parquet('{positions_dir / "**/*.parquet"}')")
         conn.execute(f"CREATE TABLE stop_times AS SELECT * FROM read_parquet('{static_dir / "stop_times.parquet"}')")
-        # conn.execute(f"CREATE TABLE routes AS SELECT * FROM read_parquet('{data_dir / "static/routes.parquet"}')")
+        # conn.execute(f"CREATE TABLE routes AS SELECT * FROM read_parquet('{static_dir / "routes.parquet"}')")
         # conn.execute(f"CREATE TABLE trips AS SELECT * FROM read_parquet('{data_dir / "static/trips.parquet"}')")
-        # conn.execute(f"CREATE TABLE stops AS SELECT * FROM read_parquet('{data_dir / "static/stops.parquet"}')")
+        conn.execute(f"CREATE TABLE stops AS SELECT * FROM read_parquet('{static_dir / "stops.parquet"}')")
         
         num_rows = conn.table("positions").count("1").fetchone()[0]
         logger.info(f"Loaded positions table with {num_rows:,} rows")
@@ -47,26 +47,28 @@ def main():
         steps = [
             remove_duplicates_and_invalid,
             create_global_trip_id,
-            clean_stops,
-            extend_with_arrivals,
-            extend_with_date,
+            clean_positions,
+            remove_partial_trips,
+            create_delays,
         ]
         for i, fn in enumerate(steps, 1):
-            logger.info(f"Executing step with name: '{fn.__name__}' ({i} / {len(steps)})")
-
+            logger.info(f"Executing step with name: '{fn.__name__}'".ljust(70, " ") + f"({i} / {len(steps)})")
             start_time = time.perf_counter()
             fn(conn)
             elapsed_time = time.perf_counter() - start_time
-
-            num_rows = conn.table("positions").count("1").fetchone()[0]
-            logger.info(f"Step '{fn.__name__}' completed in {elapsed_time:.4f} seconds with {num_rows:,} rows in table")
-        print("New format of positions:")
-        print(conn.sql(f"DESCRIBE positions"))
+            logger.info(f"Step '{fn.__name__}' completed in {elapsed_time:.4f} seconds")
 
         # Save data to disk
         output_dir.mkdir(parents=True, exist_ok=True)
-        conn.execute(f"""COPY positions TO '{output_dir}' (FORMAT PARQUET, PARTITION_BY (date), APPEND)""")
-        logger.info(f"Saved positions to: {output_dir.absolute()}")
+        for table in conn.execute("SHOW TABLES").fetchall():
+            table_name = table[0]
+            file_path = output_dir / f"{table_name}.parquet"
+            conn.execute(f"COPY {table_name} TO '{file_path}' (FORMAT PARQUET)")
+            logger.info(f"Saved {table_name} to: {file_path.absolute()}")
+
+            num_rows = conn.table(table_name).count("1").fetchone()[0]
+            print(f"SCHEMA of '{table_name}' ({num_rows:,}):")
+            print(conn.sql(f"DESCRIBE {table_name}"))
 
 
 def remove_duplicates_and_invalid(conn: duckdb.DuckDBPyConnection):
@@ -106,44 +108,97 @@ def create_global_trip_id(conn: duckdb.DuckDBPyConnection):
     FROM positions;""")
 
 
-def clean_stops(conn: duckdb.DuckDBPyConnection):
+def clean_positions(conn: duckdb.DuckDBPyConnection):
     conn.execute("""
     CREATE OR REPLACE TABLE positions AS
-    SELECT p.* EXCLUDE (current_stop_sequence, stop_id),
+    SELECT p.* EXCLUDE (
+            id, 
+            vehicle_label, 
+            vehicle_license_plate,
+            current_status, 
+            time_diff, 
+            current_stop_sequence, 
+            stop_id
+        ),
         MIN(current_stop_sequence) OVER (
-            PARTITION BY global_trip_id
+            PARTITION BY p.global_trip_id
             ORDER BY timestamp
             ROWS BETWEEN CURRENT ROW AND UNBOUNDED FOLLOWING
         ) AS current_stop_sequence,
         st.stop_id AS stop_id
     FROM positions p
-    LEFT JOIN stop_times st ON 
+    LEFT JOIN stop_times st ON
         p.trip_id = st.trip_id AND current_stop_sequence = st.stop_sequence""")
 
 
-def extend_with_arrivals(conn: duckdb.DuckDBPyConnection):
+def remove_partial_trips(conn: duckdb.DuckDBPyConnection):
     conn.execute("""
     CREATE OR REPLACE TABLE positions AS
-    WITH 
-        a AS (
-            SELECT global_trip_id, current_stop_sequence, max(timestamp) AS timestamp
-            FROM positions GROUP BY global_trip_id, current_stop_sequence
+    WITH
+        stops_visited AS (
+            SELECT
+                global_trip_id,
+                trip_id,
+                count(DISTINCT stop_id) AS stops
+            FROM positions
+            GROUP BY global_trip_id, trip_id
+        ),
+        all_stops AS (
+            SELECT 
+                trip_id,
+                count(DISTINCT stop_id) AS stops
+            FROM stop_times
+            GROUP BY trip_id
         )
-    SELECT p.*, st.arrival_time AS target_arrival, strftime(a.timestamp, '%H:%M:%S') AS actual_arrival
-    FROM positions p
-    LEFT JOIN stop_times st
-        ON p.trip_id = st.trip_id AND p.current_stop_sequence = st.stop_sequence
-    LEFT JOIN a
-        ON p.global_trip_id = a.global_trip_id AND p.current_stop_sequence = a.current_stop_sequence
-    """)
+    SELECT p.* FROM positions p
+    JOIN stops_visited sv ON p.global_trip_id = sv.global_trip_id
+    JOIN all_stops ON p.trip_id = all_stops.trip_id
+    WHERE sv.stops = all_stops.stops""")
 
 
-def extend_with_date(conn: duckdb.DuckDBPyConnection):
+def create_delays(conn: duckdb.DuckDBPyConnection):
     conn.execute("""
-    CREATE OR REPLACE TABLE positions AS
-    SELECT *,
-        DATE(timestamp) AS date
-    FROM positions
+    CREATE OR REPLACE MACRO timediff(part, start_t, end_t) AS
+    CASE
+        WHEN 12 < datediff('hour', start_t, end_t) 
+            THEN -(datediff(part, end_t, TIME '23:59:59') + datediff(part, TIME '00:00:00', start_t))
+        WHEN datediff('hour', start_t, end_t) < - 12
+            THEN datediff(part, start_t, TIME '23:59:59') + datediff(part, TIME '00:00:00', end_t)
+        ELSE 
+            datediff(part, start_t, end_t)
+    END;
+    CREATE OR REPLACE TABLE delays AS
+    WITH 
+        arrivals AS (
+            SELECT 
+                global_trip_id, 
+                route_id, 
+                trip_id, 
+                stop_id, 
+                current_stop_sequence, 
+                CAST(strftime(max(timestamp), '%H:%M:%S') AS TIME) AS actual_arrival
+            FROM positions 
+            GROUP BY global_trip_id, route_id, trip_id, stop_id, current_stop_sequence
+        )
+    SELECT
+        a.*,
+        CAST(
+            lpad((left(st.arrival_time, 2)::INT % 24)::VARCHAR, 2, '0') || substring(st.arrival_time, 3) AS TIME
+        ) AS target_arrival,
+        COALESCE(LAG(target_arrival) OVER (
+            PARTITION BY a.global_trip_id
+            ORDER BY a.current_stop_sequence
+        ), target_arrival) AS target_start,
+        CAST(timediff('second', target_start, target_arrival) AS INT) AS travel_time,
+        CAST(timediff('second', target_arrival, actual_arrival) AS INT) AS delay,
+        COALESCE(SUM(delay) OVER (
+            PARTITION BY a.global_trip_id
+            ORDER BY a.current_stop_sequence
+            ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
+        ), 0) AS cummulative_delay
+    FROM arrivals a
+    LEFT JOIN stop_times st
+        ON a.trip_id = st.trip_id AND a.current_stop_sequence = st.stop_sequence
     """)
 
 
