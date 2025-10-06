@@ -32,9 +32,9 @@ def main():
 
     with duckdb.connect(":memory:") as conn: 
         logger.info(f"Loading parquet files from: {inputs_dir}")
-        create_table_from_files(conn, "positions", inputs_dir)
-        create_table_from_files(conn, "stop_times", inputs_dir)
-        create_table_from_files(conn, "stops", inputs_dir)
+        create_table_from_files(conn, inputs_dir, "positions")
+        create_table_from_files(conn, inputs_dir, "stop_times")
+        create_table_from_files(conn, inputs_dir, "stops")
         
         num_rows = conn.table("positions").count("1").fetchone()[0]
         logger.info(f"Loaded positions table with {num_rows:,} rows")
