@@ -1,13 +1,5 @@
-"""
-Script to download GTFS static data and save as parquet files.
-
-This script downloads GTFS static data from a specified URL and saves each
-CSV file as a parquet file in the specified output directory.
-"""
-
 import argparse
 import logging
-import sys
 from pathlib import Path
 
 from src.fetch.static import fetch_static_gtfs_data
@@ -49,7 +41,7 @@ def parse_args():
     parser.add_argument(
         "-o", "--output-dir",
         type=Path,
-        required=True,
+        default="data/raw",
         help="Output directory for parquet files"
     )
     parser.add_argument(
