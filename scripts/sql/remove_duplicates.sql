@@ -1,0 +1,2 @@
+CREATE OR REPLACE TABLE positions AS
+    SELECT DISTINCT * FROM positions WHERE trip_id IS NOT NULL;
