@@ -30,21 +30,27 @@ def main():
     inputs_dir = pathlib.Path(args.inputs_dir)
     output_dir = pathlib.Path(args.outputs_dir)
 
-    with duckdb.connect(":memory:") as conn: 
+    with duckdb.connect(":memory:") as conn:
         logger.info(f"Loading parquet files from: {inputs_dir}")
+        # conn.execute(f"CREATE TABLE positions AS SELECT * FROM read_parquet($pattern)", parameters={"pattern": "data/raw/positions/2025-09-30/*.parquet"})
         create_table_from_files(conn, inputs_dir, "positions")
         create_table_from_files(conn, inputs_dir, "stop_times")
         create_table_from_files(conn, inputs_dir, "stops")
-        
+        create_table_from_files(conn, inputs_dir, "trips")
+
         num_rows = conn.table("positions").count("1").fetchone()[0]
         logger.info(f"Loaded positions table with {num_rows:,} rows")
 
         # Perform processing
         steps = [
-            "remove_duplicates",
+            "clean_data",
             "attach_global_trip_id",
             "clean_stop_indicators",
-            "create_delays",
+            "use_geo",
+            "remove_clusters",
+            "clean_stop_indicators",
+            "remove_partial_trips",
+            "create_hops",
         ]
         for i, step_name in enumerate(steps, 1):
             logger.info(f"Executing step with name: '{step_name}'".ljust(70, " ") + f"({i} / {len(steps)})")
@@ -52,6 +58,7 @@ def main():
             run_sql_file(conn, SQL_SCRIPTS_DIR / f"{step_name}.sql")
             elapsed_time = time.perf_counter() - start_time
             logger.info(f"Step '{step_name}' completed in {elapsed_time:.4f} seconds")
+            print(f"Count of position records: {conn.table('positions').count('1').fetchone()[0]:,}")
 
         # Save data to disk
         output_dir.mkdir(parents=True, exist_ok=True)

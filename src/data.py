@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 def load_data(data_dir, database: str):
     conn = duckdb.connect(database)
-    for table_name in ["positions", "stop_times", "delays", "stops"]:
+    for table_name in ["positions", "stop_times", "hops", "trips", "stops"]:
         create_table_from_files(conn, data_dir, table_name)
     return conn
 
@@ -25,6 +25,11 @@ def create_table_from_files(conn: duckdb.DuckDBPyConnection, data_dir, table_nam
     num_files = 0
     for _ in data_dir.glob(pattern):
         num_files += 1
+
+    if num_files == 0:
+        raise FileNotFoundError(
+            f"No parquet files found for table '{table_name}' in directory {data_dir} with pattern {pattern}"
+        )
 
     pattern = data_dir.absolute() / pattern
     conn.execute(

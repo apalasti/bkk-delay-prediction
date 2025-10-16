@@ -34,7 +34,7 @@ def save_dataframes_to_parquet(dataframes: dict, output_dir: Path) -> None:
             logger.error(f"Failed to save {filename}: {e}")
     
     logger.info(f"Successfully saved {len(saved_files)} parquet files")
-    
+
 
 def parse_args():
     parser = argparse.ArgumentParser( description="Download GTFS static data and save as parquet files")
@@ -63,8 +63,9 @@ def main():
     for name, df in dataframes.items():
         parquet_path = output_dir / f"{name}.parquet"
         df.to_parquet(parquet_path, index=False)
-        print(f"Saved {name} -> {parquet_path} ({len(df)} rows)")
-        print(df.info(verbose=True))
+        print(
+            f"Saved {name} -> {parquet_path} ({len(df)} rows, {df.memory_usage(deep=True).sum() / 1024 ** 2:.2f} MB)"
+        )
 
 
 if __name__ == "__main__":
