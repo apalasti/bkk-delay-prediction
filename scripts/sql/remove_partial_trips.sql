@@ -23,5 +23,4 @@ CREATE OR REPLACE TABLE positions AS
                 sc.trip_id = sv.trip_id AND sc.stop_count = sv.stop_count
         )
     SELECT p.* FROM positions p
-    JOIN full_trips ft ON
-        p.global_trip_id = ft.global_trip_id;
+    WHERE p.global_trip_id IN (SELECT global_trip_id FROM full_trips);

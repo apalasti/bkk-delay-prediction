@@ -1,32 +1,30 @@
--- Calculate differences between updates for given trips and vehicles
 CREATE OR REPLACE TABLE positions AS
     SELECT p.*,
-        COALESCE(
-            timestamp - LAG(timestamp) OVER (
-                PARTITION BY route_id, trip_id, vehicle_id 
-                ORDER BY timestamp
-            ),
-            INTERVAL '1 second'
-        ) AS time_diff
-    FROM positions p;
+        timediff('second', st.departure_time, strftime(p.timestamp, '%H:%M:%S')::TIME) AS diff_from_start,
+        p.timestamp - INTERVAL (diff_from_start) SECOND AS scheduled_start,
+        strftime(scheduled_start , '%Y-%m-%d') || '_' || p.trip_id || '_' || p.vehicle_id AS global_trip_id
+    FROM positions p
+    JOIN stop_times st ON st.trip_id = p.trip_id AND st.stop_sequence = 0;
 
--- Create a local trip_id that is uniuqe for each trip inside a
--- given (trip_id, vehicle_id)
--- NOTE: this won't produce the same hashes for logically corresponding trips if
---       they are inserted incrementally  
-CREATE OR REPLACE TABLE positions AS
-    SELECT p.*,
-        SUM(
-            CASE WHEN time_diff > INTERVAL '5 minutes' THEN 1 ELSE 0 END
-        ) OVER (
-            PARTITION BY route_id, trip_id, vehicle_id
-            ORDER BY timestamp
-            ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
-        ) AS local_trip_id
-    FROM positions p;
 
--- Create a global_trip_id that is unique for each trip no matter what
+-- Remove trips where the stop sequence regresses (i.e., bus goes backwards on the route)
 CREATE OR REPLACE TABLE positions AS
-    SELECT p.* EXCLUDE (time_diff, local_trip_id),
-        hash(route_id, trip_id, vehicle_id, local_trip_id) AS global_trip_id
-    FROM positions p;
+    WITH anomalies AS (
+        SELECT DISTINCT global_trip_id
+        FROM (
+            SELECT
+                p.global_trip_id,
+                p.current_stop_sequence,
+                LAG(p.current_stop_sequence) OVER (PARTITION BY p.global_trip_id ORDER BY p.timestamp) AS prev_stop_sequence,
+                p.timestamp,
+                LAG(p.timestamp) OVER (PARTITION BY p.global_trip_id ORDER BY p.timestamp) AS prev_timestamp
+            FROM positions p
+        ) seq
+        WHERE 
+            (seq.prev_stop_sequence IS NOT NULL AND seq.current_stop_sequence < seq.prev_stop_sequence)
+            OR
+            (seq.prev_timestamp IS NOT NULL AND seq.timestamp - seq.prev_timestamp > INTERVAL '20 minutes')
+    )
+    SELECT p.* EXCLUDE (diff_from_start, scheduled_start)
+    FROM positions p
+    WHERE p.global_trip_id NOT IN (SELECT global_trip_id FROM anomalies);

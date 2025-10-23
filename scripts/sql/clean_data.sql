@@ -1,6 +1,6 @@
 -- Remove duplicates and invalid rows
 CREATE OR REPLACE TABLE positions AS
-    SELECT DISTINCT * FROM positions WHERE trip_id IS NOT NULL;
+    SELECT DISTINCT * FROM positions p WHERE p.trip_id IS NOT NULL;
 
 
 -- Localize timestamps
@@ -30,7 +30,7 @@ CREATE OR REPLACE TABLE trips AS
 CREATE OR REPLACE TABLE stop_times AS
     SELECT st.*
     FROM stop_times st
-    JOIN trips t ON t.trip_id = st.trip_id;
+    WHERE st.trip_id IN (SELECT trip_id FROM trips);
 
 CREATE OR REPLACE TABLE positions AS
     SELECT 
@@ -41,16 +41,23 @@ CREATE OR REPLACE TABLE positions AS
             current_status
         ) 
     FROM positions p
-    JOIN trips t ON p.trip_id = t.trip_id
-    ORDER BY p.trip_id, p.vehicle_id, p.current_stop_sequence, p.timestamp;
+    WHERE p.trip_id IN (SELECT trip_id FROM trips);
 
+-- Clean stop_times
+CREATE OR REPLACE TABLE stop_times AS
+    SELECT * EXCLUDE (departure_time, arrival_time),
+        CAST(lpad((left(departure_time, 2)::INT % 24)::VARCHAR, 2, '0') || substring(departure_time, 3) AS TIME) AS departure_time,
+        CAST(lpad((left(arrival_time, 2)::INT % 24)::VARCHAR, 2, '0') || substring(arrival_time, 3) AS TIME) AS arrival_time,
+    FROM stop_times;
 
--- Trim position frequency to be only 1 position per minute
-CREATE OR REPLACE TABLE positions AS
-    SELECT first(COLUMNS(p.*))
-    FROM positions p
-    GROUP BY 
-        trip_id, 
-        vehicle_id, 
-        current_stop_sequence, 
-        date_trunc('seconds', p.timestamp);
+-- Custom function for calculating the shortest distance between two time points
+-- STRICTLY time points
+CREATE OR REPLACE MACRO timediff(part, start_t, end_t) AS
+CASE
+    WHEN 12 < datediff('hour', start_t, end_t) 
+        THEN -(datediff(part, end_t, TIME '23:59:59') + datediff(part, TIME '00:00:00', start_t))
+    WHEN datediff('hour', start_t, end_t) < - 12
+        THEN datediff(part, start_t, TIME '23:59:59') + datediff(part, TIME '00:00:00', end_t)
+    ELSE 
+        datediff(part, start_t, end_t)
+END;
