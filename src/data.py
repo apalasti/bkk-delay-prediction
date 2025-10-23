@@ -1,3 +1,4 @@
+import os
 import pathlib
 import logging
 
@@ -13,7 +14,7 @@ def load_data(data_dir, database: str):
     return conn
 
 
-def run_sql_file(conn: duckdb.DuckDBPyConnection, file_path: str):
+def run_sql_file(conn: duckdb.DuckDBPyConnection, file_path: os.PathLike):
     with open(file_path) as f:
         conn.execute(f.read())
 
