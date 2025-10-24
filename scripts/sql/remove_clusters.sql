@@ -14,17 +14,12 @@ CREATE TEMP TABLE clusters AS
 
 CREATE OR REPLACE TABLE positions AS
     SELECT 
-        p.* EXCLUDE (current_stop_sequence, stop_id),
+        p.* EXCLUDE (current_stop_sequence),
         IF(
             c.count IS NOT NULL,
             NULL,
             p.current_stop_sequence
         ) AS current_stop_sequence,
-        IF(
-            c.count IS NOT NULL,
-            NULL,
-            p.stop_id
-        ) AS stop_id,
     FROM positions p
     LEFT JOIN clusters c ON 1=1
         AND p.global_trip_id = c.global_trip_id

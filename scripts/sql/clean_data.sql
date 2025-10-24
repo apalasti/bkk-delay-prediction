@@ -3,13 +3,6 @@ CREATE OR REPLACE TABLE positions AS
     SELECT DISTINCT * FROM positions p WHERE p.trip_id IS NOT NULL;
 
 
--- Localize timestamps
-CREATE OR REPLACE TABLE positions AS
-    SELECT p.* EXCLUDE (timestamp),
-        timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Budapest' AS timestamp
-    FROM positions p;
-
-
 -- Filter to the top 100 routes
 CREATE OR REPLACE TABLE trips AS
     WITH 
@@ -38,10 +31,19 @@ CREATE OR REPLACE TABLE positions AS
             id, 
             vehicle_label, 
             vehicle_license_plate,
-            current_status
+            current_status,
+            stop_id,
         ) 
     FROM positions p
     WHERE p.trip_id IN (SELECT trip_id FROM trips);
+
+
+-- Localize timestamps
+CREATE OR REPLACE TABLE positions AS
+    SELECT p.* EXCLUDE (timestamp),
+        timestamp AT TIME ZONE 'UTC' AT TIME ZONE 'Europe/Budapest' AS timestamp
+    FROM positions p;
+
 
 -- Clean stop_times
 CREATE OR REPLACE TABLE stop_times AS
@@ -49,6 +51,7 @@ CREATE OR REPLACE TABLE stop_times AS
         CAST(lpad((left(departure_time, 2)::INT % 24)::VARCHAR, 2, '0') || substring(departure_time, 3) AS TIME) AS departure_time,
         CAST(lpad((left(arrival_time, 2)::INT % 24)::VARCHAR, 2, '0') || substring(arrival_time, 3) AS TIME) AS arrival_time,
     FROM stop_times;
+
 
 -- Custom function for calculating the shortest distance between two time points
 -- STRICTLY time points

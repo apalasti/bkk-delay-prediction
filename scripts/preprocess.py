@@ -73,7 +73,7 @@ def main():
         for table in conn.execute("SHOW TABLES").fetchall():
             table_name = table[0]
             file_path = output_dir / f"{table_name}.parquet"
-            conn.execute(f"COPY {table_name} TO '{file_path}' (FORMAT PARQUET)")
+            conn.execute(f"COPY {table_name} TO '{file_path}' (FORMAT PARQUET, COMPRESSION zstd, COMPRESSION_LEVEL 22)")
             logger.info(f"Saved {table_name} to: {file_path.absolute()}")
 
             num_rows = get_number_of_rows(conn, table_name)

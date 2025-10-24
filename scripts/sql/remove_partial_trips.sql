@@ -4,14 +4,14 @@ CREATE OR REPLACE TABLE positions AS
             SELECT
                 global_trip_id,
                 trip_id,
-                count(DISTINCT stop_id) AS stop_count
+                count(DISTINCT current_stop_sequence) AS stop_count
             FROM positions
             GROUP BY global_trip_id, trip_id
         ),
         stop_counts AS (
             SELECT
                 trip_id,
-                count(DISTINCT stop_id) AS stop_count
+                count(DISTINCT stop_sequence) AS stop_count
             FROM stop_times
             GROUP BY trip_id
         ),
