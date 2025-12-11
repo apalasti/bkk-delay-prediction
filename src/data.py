@@ -11,6 +11,32 @@ def load_data(data_dir, database: str):
     conn = duckdb.connect(database)
     for table_name in ["positions", "stop_times", "hops", "trips", "stops"]:
         create_table_from_files(conn, data_dir, table_name)
+
+    conn.install_extension("spatial")
+    conn.load_extension("spatial")
+    conn.execute("""
+CREATE OR REPLACE TABLE positions AS
+    SELECT * EXCLUDE (pos),
+        ST_GeomFromWKB(pos)::POINT_2D AS pos,
+    FROM positions;
+
+CREATE OR REPLACE TABLE stops AS
+    SELECT * EXCLUDE (stop_pos),
+        ST_GeomFromWKB(stop_pos)::POINT_2D AS stop_pos,
+    FROM stops;
+    
+-- Custom function for calculating the shortest distance between two time points
+-- STRICTLY time points
+CREATE OR REPLACE MACRO timediff(part, start_t, end_t) AS
+CASE
+    WHEN 12 < datediff('hour', start_t, end_t) 
+        THEN -(datediff(part, end_t, TIME '23:59:59') + datediff(part, TIME '00:00:00', start_t))
+    WHEN datediff('hour', start_t, end_t) < - 12
+        THEN datediff(part, start_t, TIME '23:59:59') + datediff(part, TIME '00:00:00', end_t)
+    ELSE 
+        datediff(part, start_t, end_t)
+END;""")
+
     return conn
 
 
